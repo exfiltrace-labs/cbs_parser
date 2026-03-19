@@ -34,16 +34,16 @@ Requires Python 3.10+.
 
 ```bash
 # Run all three parsers, output CSVs
-python cbs_parser.py -i ./C/ -o ./results/
+python cbs_parser.py -i C/Users/bob/AppData/Local/Packages/MicrosoftWindows.Client.CBS_cw5n1h2txyewy/ -o ./results/
 
 # Run all three parsers, produce a single Excel workbook
-python cbs_parser.py -i ./C/ -o ./results/ --xlsx
+python cbs_parser.py -i C/Users/bob/AppData/Local/Packages/MicrosoftWindows.Client.CBS_cw5n1h2txyewy/ -o ./results/ --xlsx
 
 # Run a specific parser
-python cbs_parser.py -i ./C/ -o ./results/ --parser indexeddb
+python cbs_parser.py -i C/Users/bob/AppData/Local/Packages/MicrosoftWindows.Client.CBS_cw5n1h2txyewy/ -o ./results/ --parser indexeddb
 
 # Run two parsers
-python cbs_parser.py -i ./C/ -o ./results/ --parser cache appsindex
+python cbs_parser.py -i C/Users/bob/AppData/Local/Packages/MicrosoftWindows.Client.CBS_cw5n1h2txyewy/ -o ./results/ --parser cache appsindex
 
 # JSON Lines output to stdout
 python cbs_parser.py -i ./C/ --json
@@ -150,7 +150,7 @@ Applications registered in the Start Menu index with launch counts.
 
 The IndexedDB parser relies on [ccl_chromium_reader](https://github.com/cclgroupltd/ccl_chromium_reader) by [CCL Forensics](https://www.cclsolutionsgroup.com/).
 
-Additionally, recognition is given to the work published by *detect.fyi* in *[Introducing AppsIndex.db: New Windows 11 Artifact for Tracking Start Menu Application Execution](https://detect.fyi/introducing-appsindex-db-new-windows-11-artifact-for-tracking-start-menu-application-execution-b294c8e764fa)*. During research and development of this tool, it was observed that this may have been among the first public documentations of the `AppsIndex.db` artifact.
+Additionally, recognition is given to the work published by *detect.fyi* in [Introducing AppsIndex.db: New Windows 11 Artifact for Tracking Start Menu Application Execution](https://detect.fyi/introducing-appsindex-db-new-windows-11-artifact-for-tracking-start-menu-application-execution-b294c8e764fa). During research and development of this tool, it was observed that this may have been among the first public documentations of the `AppsIndex.db` artifact.
 
 ## License
 
