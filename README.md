@@ -148,7 +148,7 @@ Applications registered in the Start Menu index with launch counts.
 
 ## Acknowledgements
 
-The IndexedDB parser relies on [ccl_chromium_reader](https://github.com/cclgroupltd/ccl_chromium_reader) by [CCL Forensics](https://www.cclsolutionsgroup.com/).
+The IndexedDB parser leverages [ccl_chromium_reader](https://github.com/cclgroupltd/ccl_chromium_reader) by [CCL Forensics](https://www.cclsolutionsgroup.com/).
 
 Additionally, recognition is given to the work published by *detect.fyi* in [Introducing AppsIndex.db: New Windows 11 Artifact for Tracking Start Menu Application Execution](https://detect.fyi/introducing-appsindex-db-new-windows-11-artifact-for-tracking-start-menu-application-execution-b294c8e764fa). During research and development of this tool, it was observed that this may have been among the first public documentations of the `AppsIndex.db` artifact.
 

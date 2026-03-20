@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """
-CBS Parser - main entry point for all CBS forensic parsers.
+The CBS Forensic Toolkit parses forensic artifacts from the Windows Start Menu search subsystem.
 
 Runs all three Start Menu artifact parsers by default, or a subset
 selected with --parser.
 
 Usage:
-    python cbs_parser.py -i <path> -o <output_dir> [--parser ...] [--json] [-v]
-    python cbs_parser.py -i <path> -o <output_dir> --xlsx
+    python cbs_parser.py -i <path> -o <output_dir> [--parser ...] [--json] [--xlsx] [-v]
 """
 
 import argparse
@@ -43,11 +42,17 @@ def csvs_to_xlsx(out_dir, xlsx_path):
         print("  No CSV files found to combine into XLSX.")
         return
 
-    wb = Workbook()
-    wb.remove(wb.active)
+    wb = Workbook(write_only=True)
+    used_names = set()
 
     for csv_file in csv_files:
         sheet_name = csv_file.stem[:31]
+        if sheet_name in used_names:
+            suffix = 2
+            while f"{sheet_name[:28]}_{suffix}" in used_names:
+                suffix += 1
+            sheet_name = f"{sheet_name[:28]}_{suffix}"
+        used_names.add(sheet_name)
         ws = wb.create_sheet(title=sheet_name)
         with open(csv_file, newline="", encoding="utf-8") as f:
             for row in csv.reader(f):
@@ -59,9 +64,8 @@ def csvs_to_xlsx(out_dir, xlsx_path):
 
 def build_command(script_path, args):
     """Build the subprocess command list for a parser."""
-    cmd = [sys.executable, str(script_path), "-i", str(args.input)]
-    if args.output:
-        cmd += ["-o", str(args.output)]
+    cmd = [sys.executable, str(script_path), "-i", str(args.input),
+           "-o", str(args.output)]
     if args.json:
         cmd.append("--json")
     if args.verbose:
@@ -71,38 +75,42 @@ def build_command(script_path, args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="CBS forensic toolkit - run one or more Start Menu artifact parsers.",
+        description="The CBS Forensic Toolkit parses forensic artifacts from the Windows Start Menu search subsystem.",
     )
     parser.add_argument(
         "-i", "--input", required=True, type=Path,
         help="Path to evidence directory (drive image mount, CBS package dir, etc.)",
     )
     parser.add_argument(
-        "-o", "--output", type=Path,
-        help="Output directory (recommended when running multiple parsers)",
+        "-o", "--output", required=True, type=Path,
+        help="Output directory for parsed results",
     )
     parser.add_argument(
         "--parser", nargs="+", choices=PARSER_ORDER, default=PARSER_ORDER,
         help="Parser(s) to run (default: all three)",
     )
     parser.add_argument(
-        "--json", action="store_true",
-        help="Emit JSON Lines output instead of CSV",
+        "--timeout", type=int, default=None, metavar="SECS",
+        help="Per-parser timeout in seconds (default: no limit)",
     )
     parser.add_argument(
-        "-v", "--verbose", action="store_true",
-        help="Enable debug logging",
+        "--json", action="store_true",
+        help="Output as JSON instead of CSV",
     )
     parser.add_argument(
         "--xlsx", action="store_true",
         help="After parsing, combine all CSVs into a single .xlsx workbook",
     )
+    parser.add_argument(
+        "-v", "--verbose", action="store_true",
+        help="Enable debug logging",
+    )
     args = parser.parse_args()
 
-    if args.xlsx and not args.output:
-        parser.error("--xlsx requires --output / -o")
     if args.xlsx and args.json:
         parser.error("--xlsx and --json are mutually exclusive (XLSX is built from CSVs)")
+
+    args.output.mkdir(parents=True, exist_ok=True)
 
     script_dir = Path(__file__).resolve().parent
     selected = args.parser
@@ -121,7 +129,16 @@ def main():
             continue
 
         cmd = build_command(script_path, args)
-        result = subprocess.run(cmd)
+        try:
+            result = subprocess.run(cmd, timeout=args.timeout)
+        except subprocess.TimeoutExpired:
+            print(f"  ERROR: {label} timed out after {args.timeout}s")
+            results[name] = (1, "timed out")
+            continue
+        except OSError as exc:
+            print(f"  ERROR: could not execute {script_path.name}: {exc}")
+            results[name] = (1, "execution error")
+            continue
         if result.returncode == 0:
             results[name] = (0, "success")
         else:
@@ -139,8 +156,7 @@ def main():
         label = PARSERS[name]["label"]
         marker = "OK" if rc == 0 else "FAILED"
         print(f"  {label}: {marker}")
-    if args.output:
-        print(f"Output directory: {args.output}")
+    print(f"Output directory: {args.output}")
 
     if args.xlsx and succeeded > 0:
         xlsx_path = args.output / "cbs_results.xlsx"
@@ -149,7 +165,7 @@ def main():
 
     print()
 
-    sys.exit(0 if succeeded > 0 else 1)
+    sys.exit(0 if succeeded == total else 1)
 
 
 if __name__ == "__main__":

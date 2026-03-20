@@ -273,7 +273,7 @@ def _extract_timeline(by_key: dict[str, list]) -> list[dict]:
                     continue
 
                 if sed_key not in prev_counts:
-                    # First time seeing this target - emit one event
+                    # First time seeing this target - output one event
                     rows.append({
                         "timestamp": timestamp,
                         "search_prefix": search_prefix,
@@ -282,9 +282,9 @@ def _extract_timeline(by_key: dict[str, list]) -> list[dict]:
                         "type": type_label,
                     })
                 elif current_count > prev_counts[sed_key]:
-                    # Count incremented - emit event(s) for each increment
+                    # Count incremented - output event(s) for each increment
                     # We only have one timestamp for possibly multiple increments,
-                    # so emit one row (the timestamp is for the most recent)
+                    # so output one row (the timestamp is for the most recent)
                     rows.append({
                         "timestamp": timestamp,
                         "search_prefix": search_prefix,
