@@ -45,8 +45,8 @@ python cbs_parser.py -i C/Users/bob/AppData/Local/Packages/MicrosoftWindows.Clie
 # Run two parsers
 python cbs_parser.py -i C/Users/bob/AppData/Local/Packages/MicrosoftWindows.Client.CBS_cw5n1h2txyewy/ -o ./results/ --parser cache appsindex
 
-# JSON Lines output to stdout
-python cbs_parser.py -i ./C/ --json
+# JSON Lines output
+python cbs_parser.py -i ./C/ -o ./results/ --json
 
 # Verbose (debug) logging
 python cbs_parser.py -i ./C/ -o ./results/ -v
@@ -59,10 +59,11 @@ The input path (`-i`) can be a drive image mount, the CBS package directory, or 
 | Flag | Required | Description |
 |------|----------|-------------|
 | `-i, --input` | Yes | Path to evidence directory |
-| `-o, --output` | No | Output directory for CSVs and optional XLSX (default: stdout) |
+| `-o, --output` | Yes | Output directory for parsed results |
 | `--parser` | No | One or more of: `indexeddb`, `cache`, `appsindex` (default: all) |
+| `--timeout` | No | Per-parser timeout in seconds (default: no limit) |
 | `--json` | No | JSON output instead of CSV |
-| `--xlsx` | No | Combine all CSVs into a single `cbs_results.xlsx` workbook (requires `-o`) |
+| `--xlsx` | No | Combine all CSVs into a single `cbs_results.xlsx` workbook |
 | `-v, --verbose` | No | Debug logging to stderr |
 
 ### Standalone parsers
