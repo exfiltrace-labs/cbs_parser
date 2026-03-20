@@ -16,15 +16,15 @@ This toolkit currently parses three main artifacts of value:
 
 | Parser | Artifact | Forensic Value |
 |--------|----------|-----------------|
-| **IndexedDB** | `LocalState/EBWebView/Default/IndexedDB/` (LevelDB) | Every **Start Menu search interaction**: what the user typed, what they launched, and when |
-| **Cache** | `LocalState/EBWebView/Default/Cache/Cache_Data/` (Chromium blockfile cache) | Cached **Bing search URLs** with unfurled query parameters: searches performed from the Start Menu even without opening a browser |
+| **IndexedDB** | `LocalState/EBWebView/Default/IndexedDB/` (LevelDB) | **Start Menu search interactions**: what the user typed, what they launched, and when |
+| **Cache** | `LocalState/EBWebView/Default/Cache/Cache_Data/` (Chromium blockfile cache) | Cached **Bing search URLs** with unfurled query parameters: internet searches performed from the Start Menu even without opening a browser |
 | **AppsIndex** | `LocalState/Search/AppsIndex.db` (SQLite) | Installed **Start Menu applications** and their **launch counts** from any execution source (Start Menu, Taskbar, direct execution, etc.) |
 
 ## Installation
 
 ```bash
 git clone https://github.com/exfiltrace-labs/cbs_parser
-cd cbs
+cd cbs_parser
 pip install -r requirements.txt
 ```
 
@@ -67,7 +67,7 @@ The input path (`-i`) can be a drive image mount, the CBS package directory, or 
 
 ### Standalone parsers
 
-Each parser also works independently:
+Each parser also works independently and can be run from the `/parsers` directory with similar usage flags:
 
 ```bash
 python parsers/cbs_indexeddb_parser.py -i ./C/ -o ./results/
@@ -77,7 +77,7 @@ python parsers/cbs_appsindex_parser.py -i ./C/ -o ./results/
 
 ## Output Files
 
-### `indexeddb_summary.csv` - Search + Launch Summary
+### `indexeddb_summary.csv`
 
 Latest state for each search prefix and target combination.
 
@@ -91,7 +91,7 @@ Latest state for each search prefix and target combination.
 | `preview_count` | Times hovered/previewed without launching |
 | `last_previewed` | UTC timestamp of most recent preview |
 
-### `indexeddb_timeline.csv` - Launch Timeline
+### `indexeddb_timeline.csv`
 
 Individual launch events reconstructed from LevelDB version diffs, presented in a timeline format.
 
@@ -103,7 +103,7 @@ Individual launch events reconstructed from LevelDB version diffs, presented in 
 | `resolved_target` | Human-readable path |
 | `type` | App, Settings, File, etc. |
 
-### `cache_searches.csv` - Cached Bing Searches
+### `cache_searches.csv`
 
 Bing search URLs extracted from the EBWebView disk cache with query parameters unfurled.
 
@@ -124,7 +124,7 @@ Bing search URLs extracted from the EBWebView disk cache with query parameters u
 | `url` | Full cached URL |
 | `cache_name` | Cache block file containing this entry |
 
-### `appsindex_apps.csv` - Installed Applications
+### `appsindex_apps.csv`
 
 Applications registered in the Start Menu index with launch counts.
 
@@ -138,19 +138,19 @@ Applications registered in the Start Menu index with launch counts.
 
 ## Analysis Tips
 
-1. **Build a timeline** - `indexeddb_timeline.csv` sorted by `timestamp` shows the user's Start Menu activity in sequence.
+1. **Build a timeline** - `indexeddb_timeline.csv` sorted by `timestamp` can show the user's recent Start Menu activity in sequence.
 
-2. **Evidence of user intent** - `cache_searches.csv` reveals what the user searched for from the Start Menu, even if they never opened a browser. Searches like "sdelete" or "how to delete history" could be indicative of anti-forensics. The cache parser is particularly valuable as it captures searches the user may not have realized were recorded.
+2. **Evidence of user intent** - `cache_searches.csv` can reveal what the user searched for from the Start Menu, even if they never opened a browser. Searches like "sdelete" or "how to delete history" could be indicative of anti-forensics. The cache parser is particularly valuable as it captures searches the user may not have realized were recorded.
 
-3. **User profiling through typos** - The `search_prefix` column captures exactly what was typed, including misspellings ("poewrs" for PowerShell). Multiple prefixes pointing to the same target show typing behavior.
+3. **User profiling through typos** - The `search_prefix` column captures exactly what was typed, including misspellings (e.g., "poewrs" for PowerShell). Multiple prefixes pointing to the same target file or executable can help establish typing behavior.
 
-4. **Cross-reference launch counts** - `appsindex_apps.csv` tracks launches from *all* sources (Taskbar, Run dialog, etc.), while `indexeddb_summary.csv` tracks only Start Menu launches. Comparing the two shows whether an application was typically launched from Start Menu or elsewhere.
+4. **Cross-reference launch counts** - `appsindex_apps.csv` tracks launches from *all* sources (Taskbar, Run dialog, etc.), while `indexeddb_summary.csv` tracks only Start Menu launches. Comparing the two shows whether an application was typically launched from Start Menu or elsewhere. Discrepancies in run counts between AppsIndex.db, UserAssist, and Prefetch are expected, given that each artifact records activity using different methods and scopes.
 
 ## Acknowledgements
 
 The IndexedDB parser leverages [ccl_chromium_reader](https://github.com/cclgroupltd/ccl_chromium_reader) by [CCL Forensics](https://www.cclsolutionsgroup.com/).
 
-Additionally, recognition is given to the work published by *detect.fyi* in [Introducing AppsIndex.db: New Windows 11 Artifact for Tracking Start Menu Application Execution](https://detect.fyi/introducing-appsindex-db-new-windows-11-artifact-for-tracking-start-menu-application-execution-b294c8e764fa). During research and development of this tool, it was observed that this may have been among the first public documentations of the `AppsIndex.db` artifact.
+Additionally, recognition is given to the work published by *thedigitaldetective* in [Introducing AppsIndex.db: New Windows 11 Artifact for Tracking Start Menu Application Execution](https://detect.fyi/introducing-appsindex-db-new-windows-11-artifact-for-tracking-start-menu-application-execution-b294c8e764fa). During research and development of this tool, it was observed that this may have been among the first public documentations of the `AppsIndex.db` artifact.
 
 ## License
 
