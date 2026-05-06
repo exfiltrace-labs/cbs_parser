@@ -145,7 +145,6 @@ def main():
             results[name] = (result.returncode, "failed")
             print(f"  WARNING: {label} exited with code {result.returncode}")
 
-    # Summary
     succeeded = sum(1 for rc, _ in results.values() if rc == 0)
     total = len(results)
 

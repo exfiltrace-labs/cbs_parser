@@ -31,34 +31,34 @@ from pathlib import Path
 
 from cbs_known_folders import GUID_RE as _GUID_RE, resolve_guid_path as _resolve_guid_path
 
-logger = logging.getLogger("cbs_parser")
-
-# Dataclasses
+logger = logging.getLogger(__name__)
 
 @dataclass
 class AppRecord:
     display_name: str
     resolved_path: str
     launch_count: int
-    app_type: str        # Win32 / UWP
+    app_type: str # Win32 / UWP
     app_id: str
+    c_rank: int
 
-
-# Path classification
 
 def _classify(serialized_id: str, app_id: str):
     """Return (app_type, resolved_path)."""
     if serialized_id.startswith("P~"):
         return "UWP", app_id
 
-    # Win32 - resolve Known Folder GUIDs in the path if present
+    if not serialized_id.startswith("W~"):
+        logger.warning(
+            "Unrecognised serializedId prefix: %r (expected W~ or P~). "
+            "Falling back to Win32 classification.",
+            serialized_id[:8],
+        )
+
     if _GUID_RE.match(app_id):
         return "Win32", _resolve_guid_path(app_id)
 
     return "Win32", app_id
-
-
-# Database discovery
 
 _RELATIVE_DB_PATH = os.path.join(
     "LocalState", "Search", "AppsIndex.db"
@@ -68,16 +68,13 @@ def find_appsindex_db(path: str | Path) -> Path | None:
     """Locate AppsIndex.db from a direct path, CBS package dir, or broader tree."""
     p = Path(path)
 
-    # Direct path to file
     if p.is_file() and p.name == "AppsIndex.db":
         return p
 
-    # Check known relative location under CBS package
     candidate = p / _RELATIVE_DB_PATH
     if candidate.is_file():
         return candidate
 
-    # Walk looking for the pattern
     logger.debug("Searching for AppsIndex.db under %s …", p)
     for root, _dirs, files in os.walk(p):
         if "AppsIndex.db" in files:
@@ -88,10 +85,7 @@ def find_appsindex_db(path: str | Path) -> Path | None:
 
     return None
 
-
-# Schema validation
-
-_EXPECTED_TABLES = {"tiles_content", "metadata"}
+_EXPECTED_TABLES = {"tiles", "metadata"}
 
 def _validate_schema(con: sqlite3.Connection) -> None:
     tables = {
@@ -106,21 +100,7 @@ def _validate_schema(con: sqlite3.Connection) -> None:
             f"AppsIndex.db is missing expected tables: {', '.join(sorted(missing))}"
         )
 
-
-# Database open helper
-
 def _open_db(db_path: Path) -> tuple[sqlite3.Connection, str | None, str | None]:
-    """
-    Open AppsIndex.db read-only.
-
-    If a non-empty WAL file exists alongside the database, copies the database
-    and its journal files to a temporary directory and opens the copy normally
-    so that SQLite replays the WAL.  The original evidence is never modified.
-
-    Returns (connection, temp_dir_or_None, wal_note_or_None).
-    The caller must close the connection and, if temp_dir is not None, clean it
-    up with shutil.rmtree.
-    """
     wal = db_path.with_suffix(".db-wal")
     shm = db_path.with_suffix(".db-shm")
     wal_has_data = wal.is_file() and wal.stat().st_size > 0
@@ -140,17 +120,13 @@ def _open_db(db_path: Path) -> tuple[sqlite3.Connection, str | None, str | None]
         )
         logger.debug("%s", note)
 
-        # Open normally (not immutable) so SQLite replays the WAL on the copy
         con = sqlite3.connect(str(tmp_db))
         return con, tmp_dir, note
 
-    # No WAL - open original immutably
     uri = f"file:{db_path}?immutable=1"
     con = sqlite3.connect(uri, uri=True)
     return con, None, None
 
-
-# Core parser
 
 def parse_appsindex(db_path: str | Path) -> dict:
     """
@@ -171,19 +147,17 @@ def parse_appsindex(db_path: str | Path) -> dict:
     try:
         _validate_schema(con)
 
-        # Metadata
         meta = {}
         for name, value in con.execute("SELECT name, value FROM metadata"):
             meta[name] = value
         result["metadata"] = meta
         logger.debug("Metadata: %s", meta)
 
-        # Apps from tiles_content
         apps: list[AppRecord] = []
         for row in con.execute(
-            "SELECT c0, c1, c3, c4 FROM tiles_content"
+            "SELECT serializedId, appId, displayName, launchCount, cRank FROM tiles"
         ):
-            serialized_id, app_id, display_name, launch_count = row
+            serialized_id, app_id, display_name, launch_count, c_rank = row
             app_type, resolved_path = _classify(
                 str(serialized_id), str(app_id)
             )
@@ -191,6 +165,10 @@ def parse_appsindex(db_path: str | Path) -> dict:
                 lc = int(launch_count)
             except (TypeError, ValueError):
                 lc = 0
+            try:
+                cr = int(c_rank)
+            except (TypeError, ValueError):
+                cr = 0
 
             apps.append(AppRecord(
                 display_name=str(display_name) if display_name else "",
@@ -198,9 +176,9 @@ def parse_appsindex(db_path: str | Path) -> dict:
                 launch_count=lc,
                 app_type=app_type,
                 app_id=str(app_id),
+                c_rank=cr,
             ))
 
-        # Sort: launch_count DESC, display_name ASC
         apps.sort(key=lambda a: (-a.launch_count, a.display_name))
         result["apps"] = apps
 
@@ -211,12 +189,9 @@ def parse_appsindex(db_path: str | Path) -> dict:
 
     return result
 
-
-# Output helpers
-
 _APP_FIELDS = [
     "display_name", "resolved_path", "launch_count",
-    "app_type", "app_id",
+    "app_type", "app_id", "c_rank",
 ]
 
 
@@ -234,8 +209,6 @@ def write_jsonl(records: list[dict], output) -> int:
         output.write("\n")
     return len(records)
 
-
-# CLI
 
 def main():
     parser = argparse.ArgumentParser(
@@ -272,7 +245,6 @@ examples:
         stream=sys.stderr,
     )
 
-    # Locate database
     db_path = find_appsindex_db(args.input)
     if db_path is None:
         print("ERROR: Could not find AppsIndex.db at or under the given path.", file=sys.stderr)
@@ -280,8 +252,11 @@ examples:
 
     logger.debug("Using database: %s", db_path)
 
-    # Parse
-    data = parse_appsindex(db_path)
+    try:
+        data = parse_appsindex(db_path)
+    except (ValueError, sqlite3.DatabaseError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(2)
 
     if data["wal_note"]:
         print(f"INFO: {data['wal_note']}", file=sys.stderr)
@@ -289,7 +264,6 @@ examples:
     apps_dicts = [asdict(a) for a in data["apps"]]
     app_count = len(apps_dicts)
 
-    # Metadata summary
     meta = data["metadata"]
     logger.debug(
         "Database version=%s, language=%s, contentHash=%s",
@@ -298,13 +272,11 @@ examples:
         meta.get("appsContentHash", "?"),
     )
 
-    # JSON output
     if args.json:
         write_jsonl(apps_dicts, sys.stdout)
         print(f"Wrote {app_count} app records as JSON Lines.", file=sys.stderr)
         return
 
-    # CSV output
     if args.output:
         out_dir = Path(args.output)
         out_dir.mkdir(parents=True, exist_ok=True)

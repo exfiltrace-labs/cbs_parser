@@ -36,23 +36,35 @@ from pathlib import Path
 from ccl_chromium_reader import ccl_chromium_indexeddb
 from cbs_known_folders import GUID_RE, resolve_guid_path
 
-logger = logging.getLogger("cbs_parser")
+logger = logging.getLogger(__name__)
 
-# Constants
+_UNIX_TS_MIN = 1_500_000_000
+_UNIX_TS_MAX = 2_000_000_000
 
-_UNIX_TS_MIN = 1_500_000_000   # ~2017-07
-_UNIX_TS_MAX = 2_000_000_000   # ~2033-05
-
+# groupType to category mapping. Validated by controlled Start Menu testing
+# (see whitepaper Section 2.3). Each row of this map corresponds to a
+# Start Menu category tab whose semantics were exercised at least once.
+# groupType=10 is deliberately unmapped. No record carrying that value was
+# observed in the data examined for this paper, so any classification would
+# be speculation. Unknown group types fall through to "Unknown(<n>)" rather
+# than being silently dropped.
 _GROUP_TYPES = {
     0: "App",
     1: "Settings",
-    4: "File",
-    5: "File",
-    7: "File",
+    4: "Image",
+    5: "Video",
+    7: "Document",
     8: "Folder",
-    10: "Web",
     11: "Web",
 }
+
+
+def _classify_group_type(group_type: int) -> str:
+    """Return the category label for a groupType, or 'Unknown(<n>)' if unmapped."""
+    label = _GROUP_TYPES.get(group_type)
+    if label is not None:
+        return label
+    return f"Unknown({group_type})"
 
 _SUMMARY_FIELDS = [
     "target", "resolved_target", "type",
@@ -64,8 +76,6 @@ _TIMELINE_FIELDS = [
     "timestamp", "search_prefix", "target", "resolved_target",
     "type",
 ]
-
-# Path discovery
 
 _RELATIVE_IDB_PATH = os.path.join(
     "LocalState", "EBWebView", "Default", "IndexedDB",
@@ -88,7 +98,7 @@ def find_indexeddb(path: str | Path) -> Path | None:
 
     # Walk
     logger.debug("Searching for Bing IndexedDB under %s …", p)
-    for root, dirs, files in os.walk(p):
+    for root, _dirs, files in os.walk(p):
         if "MANIFEST-000001" in files and Path(root).name == "https_www.bing.com_0.indexeddb.leveldb":
             full = Path(root)
             logger.debug("Found: %s", full)
@@ -96,8 +106,6 @@ def find_indexeddb(path: str | Path) -> Path | None:
 
     return None
 
-
-# Timestamp helper
 
 def _ts_to_utc(value) -> str:
     """Convert a Unix epoch (seconds or ms) to UTC datetime string."""
@@ -112,22 +120,28 @@ def _ts_to_utc(value) -> str:
     return ""
 
 
-# Target resolution
-
 def _resolve_target(identifier: str, group_type: int) -> str:
-    """Resolve raw target identifier to a human-readable path."""
-    # Files/folders: strip file: prefix, normalize slashes
-    if identifier.startswith("file:"):
-        return identifier[5:].replace("/", "\\")
+    """Resolve raw target identifier to a human-readable path.
 
-    # Apps: resolve Known Folder GUIDs
-    if GUID_RE.match(identifier):
+    Resolution behaviour depends on the groupType, per the identifier formats
+    validated in the whitepaper Section 2.3:
+      - gT=0 (App): may be a Known Folder GUID + relative path. Resolve the
+        GUID. AUMIDs, raw absolute paths, and URI handlers fall through
+        unchanged.
+      - gT=4/5/7/8 (Image, Video, Document, Folder): file:-prefixed
+        forward-slash path. Strip the prefix and normalize slashes.
+      - gT=1 (Settings) and gT=11 (Web): identifier is an internal page ID
+        or a literal query string. Return as-is.
+      - Unknown groupTypes: return as-is to avoid speculative resolution.
+    """
+    if group_type in (4, 5, 7, 8):
+        if identifier.startswith("file:"):
+            return identifier[5:].replace("/", "\\")
+        return identifier
+    if group_type == 0 and GUID_RE.match(identifier):
         return resolve_guid_path(identifier)
-
     return identifier
 
-
-# Parse SuggestionEngagementData key
 
 def _parse_sed_key(sed_key: str) -> tuple[int, str]:
     """Parse 'groupType\\tidentifier' into (group_type, identifier)."""
@@ -139,19 +153,6 @@ def _parse_sed_key(sed_key: str) -> tuple[int, str]:
             return -1, sed_key
     return -1, sed_key
 
-
-# Build suggestion lookup
-
-def _build_sugg_lookup(record_value: dict) -> dict:
-    """Map suggestionKey -> suggestion dict from the Suggestions array."""
-    lookup = {}
-    for sugg in record_value.get("Suggestions", []):
-        if isinstance(sugg, dict) and sugg.get("suggestionKey"):
-            lookup[sugg["suggestionKey"]] = sugg
-    return lookup
-
-
-# Core: load records from LevelDB
 
 def _load_records(idb_path: Path) -> dict[str, list]:
     """Load all mruWithIndex records, grouped by key, sorted by seq_no."""
@@ -170,7 +171,7 @@ def _load_records(idb_path: Path) -> dict[str, list]:
                 ):
                     if not isinstance(rec.value, dict):
                         continue
-                    key = str(rec.key.value) if hasattr(rec.key, "value") else str(rec.key)
+                    key = str(rec.key.value)
                     by_key[key].append(rec)
 
     # Sort each key's versions by sequence number
@@ -180,14 +181,15 @@ def _load_records(idb_path: Path) -> dict[str, list]:
     return by_key
 
 
-# Extract summary rows
-
 def _extract_summary(by_key: dict[str, list]) -> list[dict]:
     """One row per target, aggregated across all search prefixes."""
-    # Accumulate totals per (identifier, group_type)
+    # Accumulate totals per identifier. groupType is treated as stable for a
+    # given identifier (validated in whitepaper Section 2.3: App / Settings /
+    # File / Folder / Web identifier shapes do not overlap), so we don't key
+    # the dict by (group_type, identifier).
     agg: dict[str, dict] = {}
 
-    for search_prefix, versions in by_key.items():
+    for versions in by_key.values():
         rec = versions[-1]  # latest version
 
         for sed_key, eng in rec.value.get("SuggestionEngagementData", {}).items():
@@ -195,9 +197,7 @@ def _extract_summary(by_key: dict[str, list]) -> list[dict]:
                 continue
 
             group_type = eng.get("groupType", -1)
-            type_label = _GROUP_TYPES.get(group_type)
-            if type_label is None:
-                continue
+            type_label = _classify_group_type(group_type)
 
             _, identifier = _parse_sed_key(sed_key)
 
@@ -243,8 +243,6 @@ def _extract_summary(by_key: dict[str, list]) -> list[dict]:
     return rows
 
 
-# Extract timeline rows
-
 def _extract_timeline(by_key: dict[str, list]) -> list[dict]:
     """Reconstruct individual events from LevelDB version diffs."""
     rows = []
@@ -259,9 +257,7 @@ def _extract_timeline(by_key: dict[str, list]) -> list[dict]:
                     continue
 
                 group_type = eng.get("groupType", -1)
-                type_label = _GROUP_TYPES.get(group_type)
-                if type_label is None:
-                    continue
+                type_label = _classify_group_type(group_type)
 
                 current_count = eng.get("prefixLaunchCount", 0)
                 last_time = eng.get("lastLaunchTime", 0)
@@ -300,8 +296,6 @@ def _extract_timeline(by_key: dict[str, list]) -> list[dict]:
     return rows
 
 
-# Public API
-
 def parse_indexeddb(idb_path: str | Path) -> dict:
     """
     Parse the Bing IndexedDB and return a dict with:
@@ -311,6 +305,13 @@ def parse_indexeddb(idb_path: str | Path) -> dict:
     """
     idb_path = Path(idb_path)
     by_key = _load_records(idb_path)
+
+    if not by_key:
+        logger.warning(
+            "No mruWithIndex records found in %s. The store may be empty, "
+            "or the LevelDB may belong to a different origin.",
+            idb_path,
+        )
 
     summary = _extract_summary(by_key)
     timeline = _extract_timeline(by_key)
@@ -327,8 +328,6 @@ def parse_indexeddb(idb_path: str | Path) -> dict:
     }
 
 
-# Output helpers
-
 def write_csv(rows: list[dict], fieldnames: list[str], output) -> int:
     writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
     writer.writeheader()
@@ -343,8 +342,6 @@ def write_jsonl(records: list[dict], output) -> int:
         output.write("\n")
     return len(records)
 
-
-# CLI
 
 def main():
     parser = argparse.ArgumentParser(
@@ -390,7 +387,11 @@ examples:
 
     logger.debug("Using IndexedDB: %s", idb_path)
 
-    data = parse_indexeddb(idb_path)
+    try:
+        data = parse_indexeddb(idb_path)
+    except Exception as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(2)
 
     summary = data["summary"]
     timeline = data["timeline"]

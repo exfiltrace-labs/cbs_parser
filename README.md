@@ -2,14 +2,12 @@
 
 The **CBS Forensic Toolkit** parses forensic artifacts from the Windows Start Menu search subsystem (`MicrosoftWindows.Client.CBS_cw5n1h2txyewy`). It is able to extract search history, cached Bing queries, and application launch records (including timestamps and counts) into CSVs or a single Excel workbook.
 
-No mainstream forensic tool currently parses all of these artifacts.
-
 ## Artifacts
 
 The CBS package lives at:
 
 ```
-C:\Users\<user>\AppData\Local\Packages\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\
+%LOCALAPPDATA%\Packages\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\
 ```
 
 This toolkit currently parses three main artifacts of value:
@@ -34,22 +32,22 @@ Requires Python 3.10+.
 
 ```bash
 # Run all three parsers, output CSVs
-python cbs_parser.py -i C/Users/bob/AppData/Local/Packages/MicrosoftWindows.Client.CBS_cw5n1h2txyewy/ -o ./results/
+python cbs_parser.py -i <path_to_evidence> -o ./results/
 
 # Run all three parsers, produce a single Excel workbook
-python cbs_parser.py -i C/Users/bob/AppData/Local/Packages/MicrosoftWindows.Client.CBS_cw5n1h2txyewy/ -o ./results/ --xlsx
+python cbs_parser.py -i <path_to_evidence> -o ./results/ --xlsx
 
 # Run a specific parser
-python cbs_parser.py -i C/Users/bob/AppData/Local/Packages/MicrosoftWindows.Client.CBS_cw5n1h2txyewy/ -o ./results/ --parser indexeddb
+python cbs_parser.py -i <path_to_evidence> -o ./results/ --parser indexeddb
 
 # Run two parsers
-python cbs_parser.py -i C/Users/bob/AppData/Local/Packages/MicrosoftWindows.Client.CBS_cw5n1h2txyewy/ -o ./results/ --parser cache appsindex
+python cbs_parser.py -i <path_to_evidence> -o ./results/ --parser cache appsindex
 
 # JSON Lines output
-python cbs_parser.py -i ./C/ -o ./results/ --json
+python cbs_parser.py -i <path_to_evidence> -o ./results/ --json
 
 # Verbose (debug) logging
-python cbs_parser.py -i ./C/ -o ./results/ -v
+python cbs_parser.py -i <path_to_evidence> -o ./results/ -v
 ```
 
 The input path (`-i`) can be a drive image mount, the CBS package directory, or a path directly to the artifact. Each parser will search for the expected path pattern within whatever you provide.
@@ -71,9 +69,9 @@ The input path (`-i`) can be a drive image mount, the CBS package directory, or 
 Each parser also works independently and can be run from the `/parsers` directory with similar usage flags:
 
 ```bash
-python parsers/cbs_indexeddb_parser.py -i ./C/ -o ./results/
-python parsers/cbs_cache_parser.py -i ./C/ -o ./results/
-python parsers/cbs_appsindex_parser.py -i ./C/ -o ./results/
+python parsers/cbs_indexeddb_parser.py -i <path_to_evidence> -o ./results/
+python parsers/cbs_cache_parser.py -i <path_to_evidence> -o ./results/
+python parsers/cbs_appsindex_parser.py -i <path_to_evidence> -o ./results/
 ```
 
 ## Output Files
@@ -84,9 +82,9 @@ Latest state for each search prefix and target combination.
 
 | Column | Description |
 |--------|-------------|
-| `target` | Application, file, or setting identifier |
-| `resolved_target` | Human-readable path (Known Folder GUIDs resolved) |
-| `type` | App, Settings, File, etc. |
+| `target` | Application, file, folder, settings page, or web-query identifier |
+| `resolved_target` | Human-readable path. For applications stored under a Known Folder GUID, the GUID is expanded (e.g., `{1AC14E77-...}\cmd.exe` → `%SystemRoot%\System32\cmd.exe`). For files and folders, the `file:` prefix is stripped and forward slashes are converted to backslashes. AUMIDs, raw paths, URI handlers, settings page IDs, and web-search query strings are passed through unchanged. |
+| `type` | Category derived from the underlying `groupType`: `App` (0), `Settings` (1), `Image` (4), `Video` (5), `Document` (7), `Folder` (8), `Web` (11). Unrecognised group types appear as `Unknown(<n>)`. |
 | `launch_count` | Total launches from this search prefix |
 | `last_launched` | UTC timestamp of most recent launch |
 | `preview_count` | Times hovered/previewed without launching |
@@ -100,9 +98,9 @@ Individual launch events reconstructed from LevelDB version diffs, presented in 
 |--------|-------------|
 | `timestamp` | UTC timestamp of the event |
 | `search_prefix` | What the user typed (includes typos) |
-| `target` | Application, file, or setting identifier |
-| `resolved_target` | Human-readable path |
-| `type` | App, Settings, File, etc. |
+| `target` | Application, file, folder, settings page, or web-query identifier |
+| `resolved_target` | Human-readable path (same resolution rules as in `indexeddb_summary.csv`) |
+| `type` | Category derived from the underlying `groupType`: `App`, `Settings`, `Image`, `Video`, `Document`, `Folder`, `Web`, or `Unknown(<n>)` for any value not validated in this paper |
 
 ### `cache_searches.csv`
 
@@ -112,8 +110,8 @@ Bing search URLs extracted from the EBWebView disk cache with query parameters u
 |--------|-------------|
 | `user_typed` | What the user typed into the Start Menu |
 | `bing_searched` | The full query sent to Bing |
-| `query_method` | How the query was formed (typed, suggestion, etc.) |
-| `search_source` | Where the search originated |
+| `qs` | Raw `qs=` parameter from the cached URL. Bing's "SuggestionType" code indicating how the query was formed (e.g., `SW`, `UT`, `MB`, `EP`, `LS`, `AS`, `LT`, `OS`, `SC`). The semantics of each code are not officially documented; do not infer them without validation. |
+| `form` | Raw `form=` parameter from the cached URL. Bing's source-of-search code (e.g., `WMSAUT` for Start Menu auto-suggest, `WMSMAN` for manually-typed Start Menu queries). Also undocumented. |
 | `session_id` | Bing session identifier |
 | `last_accessed` | When the cache entry was last accessed |
 | `record_created_time` | When the cache entry was created |
@@ -132,24 +130,15 @@ Applications registered in the Start Menu index with launch counts.
 | Column | Description |
 |--------|-------------|
 | `display_name` | Application display name |
-| `resolved_path` | Resolved file path or UWP package ID |
+| `resolved_path` | Resolved filesystem path when the underlying `serializedId` is a Known Folder GUID + relative path (e.g., `%ProgramFiles%\VideoLAN\VLC\vlc.exe`). For UWP entries and for Win32 apps registered under an AUMID rather than a fixed install path (e.g., `Brave`, `com.squirrel.Discord.Discord`, `Microsoft.Windows.Explorer`), there is no path to resolve and this column falls back to the AUMID itself. |
 | `launch_count` | Total launches (from any source, not just Start Menu) |
 | `app_type` | Win32 or UWP |
 | `app_id` | Internal application identifier |
-
-## Analysis Tips
-
-1. **Build a timeline** - `indexeddb_timeline.csv` sorted by `timestamp` can show the user's recent Start Menu activity in sequence.
-
-2. **Evidence of user intent** - `cache_searches.csv` can reveal what the user searched for from the Start Menu, even if they never opened a browser. Searches like "sdelete" or "how to delete history" could be indicative of anti-forensics. The cache parser is particularly valuable as it captures searches the user may not have realized were recorded.
-
-3. **User profiling through typos** - The `search_prefix` column captures exactly what was typed, including misspellings (e.g., "poewrs" for PowerShell). Multiple prefixes pointing to the same target file or executable can help establish typing behavior.
-
-4. **Cross-reference launch counts** - `appsindex_apps.csv` tracks launches from *all* sources (Taskbar, Run dialog, etc.), while `indexeddb_summary.csv` tracks only Start Menu launches. Comparing the two shows whether an application was typically launched from Start Menu or elsewhere. Discrepancies in run counts between AppsIndex.db, UserAssist, and Prefetch are expected, given that each artifact records activity using different methods and scopes.
+| `c_rank` | Numeric rank value from the `tiles.cRank` column. Presumed to feed Start Menu ordering. Apps without a learned rank typically carry the value stored in `metadata.defaultRank`. The exact semantics are not officially documented. |
 
 ## Acknowledgements
 
-The IndexedDB parser leverages [ccl_chromium_reader](https://github.com/cclgroupltd/ccl_chromium_reader) by [CCL Forensics](https://www.cclsolutionsgroup.com/).
+The IndexedDB and cache parsers leverage [ccl_chromium_reader](https://github.com/cclgroupltd/ccl_chromium_reader) by [CCL Forensics](https://www.cclsolutionsgroup.com/). The IndexedDB parser uses it for LevelDB parsing and V8 value deserialization, and the cache parser uses it for Chromium blockfile decoding.
 
 Additionally, recognition is given to the work published by *thedigitaldetective* in [Introducing AppsIndex.db: New Windows 11 Artifact for Tracking Start Menu Application Execution](https://detect.fyi/introducing-appsindex-db-new-windows-11-artifact-for-tracking-start-menu-application-execution-b294c8e764fa). During research and development of this tool, it was observed that this may have been among the first public documentations of the `AppsIndex.db` artifact.
 
